@@ -15,5 +15,4 @@ EXP = {'mito_check_test':
 #         'cols' : tuple(range(4, 5)),
         'training_sites' : (1,),
         }
-       }
-       
+       }   

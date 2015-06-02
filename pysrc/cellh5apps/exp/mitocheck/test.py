@@ -6,7 +6,7 @@ from cellh5apps.outlier.learner import OneClassSVM, OneClassSVM_SKL, ClusterGMM,
 from cellh5apps.exp import EXP
 
 def test_feature_read():
-    od = OutlierDetection("mito_check_feature_read_TEST", **EXP['mito_1'])
+    od = OutlierDetection("mito_check_feature_read_TEST", **EXP['mito_check_test'])
     od.set_max_training_sample_size(20000)
 #     od.read_feature(remove_feature=(0, 62, 92, 122, 152))
     od.read_feature()

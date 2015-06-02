@@ -4,6 +4,7 @@ import vigra
 import scipy
 import h5py
 import time
+import cPickle as pickle
 
 from matplotlib import pyplot as plt
 from cellh5apps.utils.plots import matplotlib_black_background
@@ -12,7 +13,7 @@ from scipy import stats
 from sklearn.svm import OneClassSVM
 from sklearn.feature_selection import RFE
 from sklearn.decomposition import PCA, KernelPCA
-from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, accuracy_score, roc_curve, auc
+from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, accuracy_score, roc_curve, recall_score, roc_auc_score
 from sklearn.metrics.metrics import roc_curve
 from sklearn.covariance import EmpiricalCovariance, MinCovDet
 from sklearn.metrics import accuracy_score
@@ -32,7 +33,8 @@ from cellh5apps.utils.colormaps import QtColorMapFromHex
 
 from itertools import product
 
-from cellh5apps.outlier.learner import OneClassSVM_LIBSVM, OneClassKDE, OneClassMahalanobis, OneClassGMM, OneClassSVM_SKL, ClusterGMM
+from cellh5apps.outlier.learner import OneClassSVM_LIBSVM, OneClassKDE, OneClassMahalanobis, OneClassGMM, OneClassSVM_SKL, ClusterGMM,\
+    OneClassSVM_SKL_PRECLUSTER, OneClassGMM2, OneClassRandom
 from _functools import partial
 from matplotlib.mlab import dist
 YlBlCMap = matplotlib.colors.LinearSegmentedColormap.from_list('asdf', [(0,0,1), (1,1,0)])
@@ -58,7 +60,7 @@ def blend_images_max(images):
 
 def _predict_od_(xxx, classifier, feature_set):
     data_ = xxx[feature_set]
-    if len(data_) == 0 or isinstance(data_, (float,)):
+    if isinstance(data_, (float,)) or len(data_) == 0:
         return numpy.zeros((0, 0)), numpy.zeros((0, 0))
     prediction = classifier.predict(data_)
     distance = classifier.decision_function(data_)
@@ -70,15 +72,13 @@ class OutlierDetection(CH5Analysis):
         self.set_max_training_sample_size(max_training_samples)
         
     def train(self, train_on=('neg',), classifier_class=OneClassSVM_SKL, in_classes=None, feature_set="Object features", **kwargs):
-        training_matrix = self.get_data(train_on, feature_set, in_classes)
+        training_matrix = self.get_data(train_on, feature_set, in_classes, export_galleries=True)
         self.train_classifier(training_matrix, classifier_class, **kwargs)
         
     def predict2(self, feature_set="Object features"):
-        
-        
         prediction, distance = cellh5.pandas_ms_apply(self.mapping, partial(_predict_od_, classifier=self.classifier, feature_set=feature_set), 16)
-        self.mapping['Predictions2'] = pandas.Series(prediction)
-        self.mapping['Score2'] = distance
+        self.mapping['Predictions'] = pandas.Series(prediction)
+        self.mapping['Score'] = distance
         
         
 
@@ -114,6 +114,14 @@ class OutlierDetection(CH5Analysis):
             self.classifier = classifier_class(**kwargs)
         elif   classifier_class == OneClassSVM_SKL:
             self.classifier = classifier_class(**kwargs)
+        elif   classifier_class == OneClassSVM_SKL_PRECLUSTER:
+            self.classifier = classifier_class(**kwargs)
+        elif   classifier_class == OneClassGMM2:
+            self.classifier = classifier_class(**kwargs)
+        elif   classifier_class == OneClassRandom:
+            self.classifier = classifier_class(**kwargs)    
+            
+            OneClassRandom
         else:
             raise RuntimeError("Classifier unknown")
             
@@ -140,6 +148,90 @@ class OutlierDetection(CH5Analysis):
             
         res = pandas.Series(self.mapping[self.mapping['Group'].isin(('target', 'pos', 'neg'))]['Predictions'].map(_outlier_count))
         self.mapping['Outlyingness'] = res
+        
+    def make_top_hit_list(self, top=150, for_group=('neg', 'pos', 'target')):
+        min_object_coutn_group = 8
+        group_on = ['Plate', 'siRNA ID', 'Gene Symbol']
+
+        # get global values of all plates        
+        group = self.mapping[(self.mapping['Object count'] > 0) ].groupby(group_on)
+        overall_max = group['Outlyingness'].max().max()
+        
+        neg_group = self.mapping[(self.mapping['Object count'] > 0) & (self.mapping['Group'] == 'neg')].groupby(group_on)
+        neg_mean = neg_group.mean()['Outlyingness'].mean()
+        
+        pos_group = self.mapping[(self.mapping['Object count'] > 0) & (self.mapping['Group'] == 'pos')].groupby(group_on)
+        pos_mean = pos_group.mean()['Outlyingness'].mean()        
+        
+        #iterate over plates and make hit list figure
+        label = []
+        values = []
+        take_it = []
+
+        group = self.mapping[(self.mapping['Object count'] > 0)].groupby(['Plate', 'Well', 'siRNA ID', 'Gene Symbol', 'Group'])            
+        means = group.apply(lambda x: (x['Outlyingness'] * x['Object count']).sum() / x['Object count'].sum())
+        
+
+        for g, m in means.iteritems():
+            count = self.mapping['Object count'][group.groups[g]].sum()
+            values.append(m)
+            label.append(g + (count,))
+            take_it.append(count > min_object_coutn_group and self.mapping['Group'][group.groups[g]].iloc[0] in for_group)
+                
+                    
+        svalues, slabel, stake_it = zip(*sorted(zip(values, label, take_it)))
+        
+
+        svalues = svalues[-top:]
+        slabel = slabel[-top:]
+        stake_it = stake_it[-top:]
+        
+        
+
+        svalues_val = [ss for ss, t in zip(svalues, stake_it) if t ]
+        slabel_val = [ss for ss, t in zip(slabel, stake_it) if t ]
+        # Do plot 
+        
+        if False:     
+            fig = plt.figure(figsize=(top/6 + 3, 10))
+            ax = plt.subplot(111)
+            ax.errorbar(range(len(svalues_val)), svalues_val, fmt='o', markeredgecolor='none')
+            ax.set_xticks(range(len(svalues_val)), minor=False)
+    
+            ax.set_xticklabels(["%s %s %s %s %s (%d)" % g for g in slabel_val], rotation=90)
+            for i, tl in enumerate(ax.get_xticklabels()):
+                if slabel_val[i][-2].startswith('pos'):
+                    tl.set_color("red") 
+                elif slabel_val[i][-2].startswith('neg'):
+                    tl.set_color("green")  
+            
+            ax.axhline(numpy.mean(values), label='Target mean')
+            ax.axhline(numpy.mean(values) + numpy.std(values) * 2, color='k', linestyle='--', label='Target cutoff at +2 sigma')
+            ax.axhline(numpy.mean(values) - numpy.std(values) * 2, color='k', linestyle='--', label='Target cutoff at -2 sigma')
+            ax.axhline(neg_mean, color='g', label='Negative control mean')
+            #ax.axhline(pos_mean, color='r', label='Positive control mean')
+            
+            plt.legend(loc=2)
+            plt.ylabel('Outlyingness (OC-SVM)')
+            plt.xlabel('Target genes')
+            plt.ylim(0, overall_max+0.1)
+            plt.xlim(-1, len(svalues_val)+1)
+            plt.tight_layout()
+            plt.savefig(self.output('top_%d_hit_list.pdf' % top))
+            
+        prefix_lut = {}
+        for ii, g in enumerate(reversed(slabel)):
+            prefix_lut[(g[0], g[1])] = "%04d" % (ii+1)
+            
+            
+        # Export to file
+        with open(self.output('top_outlier_list.txt'), 'wb') as fw:
+            fw.write("\t".join(['Plate', 'Well', 'siRNA ID', 'Gene Symbol', 'Group', 'CellCount', 'Outlyingness']) + "\n")
+            for info, value in zip(slabel, svalues):
+                tmp = "\t".join(map(str,info)) + "\t" + str(value) + "\n"
+                fw.write(tmp)
+        
+        #self.make_outlier_galleries(prefix_lut, include_excluded=False)
         
     def predict_with_classifier(self, test_matrix, log_file_handle=None):
         prediction = self.classifier.predict(test_matrix)
@@ -193,6 +285,8 @@ class OutlierClusterPlots(OutlierDetectionAssay):
         self.k = self.cluster_class.n_components
         
         def _cluster_(xxx):
+            if len(xxx[feature_set]) == 0:
+                return [], []
             data = xxx[feature_set][:, self.cluster_feature_idx]
             cluster = self.cluster_class.predict(data)
             outliers = xxx["Predictions"]
@@ -255,10 +349,10 @@ class OutlierClusterPlots(OutlierDetectionAssay):
             site = self.mapping.loc[ri]["Site"]
             
             ch5pos = self.ca.cellh5_handles[plate].get_position(well, str(site))
-            img.append(ch5pos.get_gallery_image_contour(ci))
+            img.append(ch5pos.get_gallery_image(ci))
         return img
         
-    def evaluate(self, split):
+    def evaluate(self):
         cluster = self.ca.get_column_as_matrix("Outlier clustering")
         classi = self.ca.get_column_as_matrix("Object classification label")
         
@@ -359,6 +453,33 @@ class OutlierDetectionSingleCellPlots(OutlierDetectionAssay):
                 cur_args[k] = grid_params[i] 
                 
             func(**cur_args)
+            
+    def outlier_confuion_galleries(self, on_group=('neg', 'target', 'pos'), compare_to='Predictions', outlier_indicator=-1):
+        group_selection = self.mapping['Group'].isin(on_group)
+        sl = numpy.concatenate(list(self.mapping[self.mapping['Object count'] >0 & group_selection]['Object classification label']))
+        od = numpy.concatenate(list(self.mapping[self.mapping['Object count'] >0 & group_selection][compare_to]))
+        
+        plate   = self.mapping[self.mapping['Object count'] >0 & group_selection][["Plate", "Well", "Site"]].as_matrix()
+        oc   = list(self.mapping[self.mapping['Object count'] >0 & group_selection]["Object count"])
+        plate = numpy.concatenate([[plate[ii]]*oc[ii] for ii in xrange(len(plate))])
+        
+        ch5_ind = numpy.concatenate(list(self.mapping[self.mapping['Object count'] >0 & group_selection]['CellH5 object index 2']))
+        
+        for sl_class in numpy.unique(sl):
+            for od_class in numpy.unique(od):
+                print sl_class, "vs", od_class,
+                img = []
+                entries = numpy.nonzero(numpy.logical_and(sl==sl_class, od ==od_class))[0]
+                numpy.random.shuffle(entries)
+                for e in entries[:400]:
+                    pl = plate[e][0]
+                    we = plate[e][1]
+                    si = plate[e][2]
+                    ch5pos = self.ca.cellh5_handles[pl].get_position(we, str(si))
+                    img.append(ch5pos.get_gallery_image_contour(ch5_ind[e]))
+                img = CH5File.gallery_image_matrix_layouter_rgb(iter(img), (20,20))
+                vigra.impex.writeImage(img.swapaxes(1,0), self.ca.output("_gal_conf_%d_vs_%d.png" % (sl_class, od_class)))
+
     
     def get_outlier_confusion(self, on_group=('neg', 'target', 'pos'), compare_to='Predictions', outlier_indicator=-1):
         group_selection = self.mapping['Group'].isin(on_group)
@@ -411,12 +532,13 @@ class OutlierDetectionSingleCellPlots(OutlierDetectionAssay):
 
         class_labels = pandas.Series(self.mapping[self.mapping['Object count'] > 0]['Object classification label'])
         for class_i, name in class_dict.items():                     
-            export['%02d_%s' % (class_i, name)] = class_labels.map(partial(_class_count, cls=class_i))
+            export.loc[:, '%02d_%s' % (class_i, name)] = class_labels.map(partial(_class_count, cls=class_i))
 
         export.to_csv(filename, sep="\t")
         
     def export_confusion(self, cm, split, prefix=""):
         fig = plt.figure()
+        cm = cm.astype(numpy.float32)
         
         ax = plt.subplot(121)
         res = ax.pcolor(cm, cmap=YlBlCMap,)
@@ -447,22 +569,124 @@ class OutlierDetectionSingleCellPlots(OutlierDetectionAssay):
         stats = self.get_stats(cm2, split)
         ax.set_title("acc %3.2f, tpr %3.2f, fpr %3.2f \npre %3.2f, f1 %3.2f, bacc %3.2f" % (stats["acc"], stats["tpr"], stats["fpr"], stats["pre"], stats["f1"], stats["bacc"]))
         
-        filename = self.ca.output("confusion_%s.png" % self.ca.classifier.describe())
+        filename = self.ca.output(prefix + "confusion_%s.png" % self.ca.classifier.describe())
         fig.savefig(filename)
         plt.close(fig)
         
-        filename = self.ca.output("confusion_%s.txt" % self.ca.classifier.describe())
+        filename = self.ca.output(prefix + "confusion_%s.txt" % self.ca.classifier.describe())
         numpy.savetxt(filename, cm, delimiter="\t")
         
+    def _get_label_of_cell(self, plate, well, site, ch5_idx, column_name="Object classification label"):
+        ma = self.ca.mapping
+        pos = ma[(ma["Plate"] == plate) & (ma["Well"] == well) & (ma["Site"] == site)]
+        if len(pos) == 0:
+            return None
+        
+        pos_idx = numpy.nonzero(pos['CellH5 object index 2'].iloc[0] == ch5_idx)[0]
+        
+        return pos[column_name].iloc[0][pos_idx[0]]
+        
+    def evaluate_cellinder(self, filename, split=1, prefix=''):
+        anno = pandas.read_csv(filename, sep="\t")
+        anno = anno[anno["Correct"]]
+        
+        unique_labels = numpy.unique(anno["Label"])
+        
+        conf = numpy.zeros((len(unique_labels), 2), dtype=numpy.int32)
+        matrix_data = []
+        matrix_label = []
+        od_label = []
+        scores = []
+        
+        for _, (plate, well, site, ch5_idx, label) in anno[["Plate", "Well", "Site", "CellH5_index", "Label"]].iterrows():
+            true_label = self._get_label_of_cell(plate, well, site, ch5_idx)
+            outlier_label = self._get_label_of_cell(plate, well, site, ch5_idx, "Predictions")
+            pca_feature = self._get_label_of_cell(plate, well, site, ch5_idx, "PCA")
+            score = self._get_label_of_cell(plate, well, site, ch5_idx, "Score")
+            
+            matrix_data.append(pca_feature)
+            matrix_label.append(true_label) 
+            scores.append(score)
+            
+            if true_label is None:
+                continue
+            
+            outlier_label = -(outlier_label - 1)/2
+            conf[true_label, outlier_label] += 1
+            od_label.append(outlier_label)
+            
+        if True:
+            # PCA Subspace
+            matrix = numpy.array(matrix_data)            
+            matrix_label = numpy.array(matrix_label)
+            od_label = numpy.array(od_label)
+            
+            bin_size = 32
+            cut_to_percentile = 1
+
+            xmin, xmax = matrix[:,0].min(), matrix[:,0].max()
+            ymin, ymax = matrix[:,1].min(), matrix[:,1].max()
+            if cut_to_percentile is not None:
+                p_l = lambda x: numpy.percentile(x, cut_to_percentile)
+                p_h = lambda x: numpy.percentile(x, 100-cut_to_percentile)
+                
+                xmin, xmax = p_l(matrix[:,0]), p_h(matrix[:,0])
+                ymin, ymax = p_l(matrix[:,1]), p_h(matrix[:,1])
+                
+            bins = (numpy.linspace(xmin, xmax, bin_size), numpy.linspace(ymin, ymax, bin_size))
+            
+            class_dict = self.ca.get_object_classificaiton_dict()
+            max_class = max(class_dict.keys())
+            
+            for dd, cname in class_dict.items():
+                ax = plt.subplot(111) 
+                image1, image1_org  = self.myscatter(ax, matrix[matrix_label==dd, 0], matrix[matrix_label==dd, 1], bins=bins)
+                vigra.impex.writeImage(image1_org.swapaxes(1,0), self.ca.output("ci_%d_%s.tif" % (dd, cname)))
+                
+            ax = plt.subplot(111) 
+            image1, image1_org  = self.myscatter(ax, matrix[od_label==0, 0], matrix[od_label==0, 1], bins=bins)
+            vigra.impex.writeImage(image1_org.swapaxes(1,0), self.ca.output("ci_od_inlier.tif" ))
+            
+            ax = plt.subplot(111) 
+            image1, image1_org  = self.myscatter(ax, matrix[od_label==1, 0], matrix[od_label==1, 1], bins=bins)
+            vigra.impex.writeImage(image1_org.swapaxes(1,0), self.ca.output("ci_od_outlier.tif"))
+            
+        if True:
+            # ROC
+            scores = numpy.array(scores)
+            abnormal = (matrix_label > 0).astype(numpy.uint8)
+            
+            f = plt.figure()
+            
+            fpr, tpr, thres = roc_curve(abnormal, scores, pos_label=1)
+            auc = roc_auc_score(abnormal, scores)
+
+            ax = plt.subplot(111)
+            ax.plot(fpr, tpr)    
+            ax.set_xlabel('False positive rate')
+            ax.set_ylabel('True positive rate')
+            ax.set_aspect(1.0)
+            ax.set_title("%3.4f" % auc)
+            
+            stats = self.get_stats(conf.astype('float'), 1)
+            plt.plot(stats['fpr'], stats['tpr'], 'ro')
+            f.savefig(self.ca.output('%s_roc.pdf' % prefix))
+            
+            pickle.dump([self.ca.classifier.describe(), prefix, fpr, tpr, thres, auc, stats['fpr'], stats['tpr']], open(self.ca.output('%s_roc_data.pkl' % prefix), 'w'))
+            
+        return conf
     
     def evaluate(self, split, return_='bacc'):
-#         self.export_result_table()
+        self.export_result_table()
         cm = self.get_outlier_confusion()
         self.export_confusion(cm, split)
         stats = self.get_stats(cm, split)
-        sv_frac = (self.ca.classifier.support_vectors_.shape[0] / float(self.ca.last_training_matrix.shape[0])) 
+        if False:
+            sv_frac = (self.ca.classifier.support_vectors_.shape[0] / float(self.ca.last_training_matrix.shape[0])) 
+        else:
+            sv_frac = 0
     
-        output=  "%5.4f\t%5.4f\t%5.4f\t%4.3f\t%4.3f\t%4.3f\t%s\t%f\t%f\t%f\n" % (stats['acc'], stats['tpr'], stats['fpr'], stats['pre'], stats['f1'], stats['bacc'], self.ca.classifier.describe(), sv_frac, self.ca.classifier.nu , self.ca.classifier.gamma)
+        output=  "%5.4f\t%5.4f\t%5.4f\t%4.3f\t%4.3f\t%4.3f\t%s\n" % (stats['acc'], stats['tpr'], stats['fpr'], stats['pre'], stats['f1'], stats['bacc'], self.ca.classifier.describe())
         with open(self.ca.output("report.txt"), "a") as myfile:
             myfile.write(output)
             
@@ -474,9 +698,9 @@ class OutlierDetectionSingleCellPlots(OutlierDetectionAssay):
         cm = self.get_cluster_confusion()
         self.export_confusion(cm, split)
         stats = self.get_stats(cm, split)
-        sv_frac = (self.ca.classifier.support_vectors_.shape[0] / float(self.ca.last_training_matrix.shape[0])) 
+#         sv_frac = (self.ca.classifier.support_vectors_.shape[0] / float(self.ca.last_training_matrix.shape[0])) 
     
-        output=  "%5.4f\t%5.4f\t%5.4f\t%4.3f\t%4.3f\t%4.3f\t%s\t%f\t%f\t%f\n" % (stats['acc'], stats['tpr'], stats['fpr'], stats['pre'], stats['f1'], stats['bacc'], self.ca.classifier.describe(), sv_frac, self.ca.classifier.nu , self.ca.classifier.gamma)
+        output=  "%5.4f\t%5.4f\t%5.4f\t%4.3f\t%4.3f\t%4.3f\t%s\n" % (stats['acc'], stats['tpr'], stats['fpr'], stats['pre'], stats['f1'], stats['bacc'], self.ca.classifier.describe())
         with open(self.ca.output("report.txt"), "a") as myfile:
             myfile.write(output)
         if return_ == "all":
@@ -670,9 +894,6 @@ class OutlierFeatureSelection(object):
         
         return 1-3*(neg_out.std() + pos_out.std()) / (numpy.abs(neg_out.mean()-pos_out.mean())) 
         
-        
-        
-        
     def zfactor_fs_rank(self, stop_after):
         result = {}
         for f_idx in range(self.training_matrix.shape[1]):
@@ -691,24 +912,4 @@ class OutlierFeatureSelection(object):
         self.active_set_score.append(sorted([(v,k) for k,v in result.items()]))
         if len(self.active_set) < stop_after:
             self.zfactor_fs_rank(stop_after)
-            
         
-                
-                
-                
-            
-            
-        
-        
-        
-        
-        
-        
-        
-        
-
-      
-
-    
-        
-

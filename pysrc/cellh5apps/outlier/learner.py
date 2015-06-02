@@ -16,6 +16,8 @@ from sklearn.neighbors import NearestNeighbors
 
 import h5py
 
+from collections import OrderedDict
+
 class BaseClassifier(object):
     def describe(self):
         desc = self.__class__.__name__ 
@@ -36,10 +38,75 @@ class BaseClassifier(object):
     
 class OneClassSVM_SKL(OneClassSVM, BaseClassifier):
     _fit_params = ['nu', 'gamma']
+    _predict_params = []
     direct_thresh = 0
+    
+    def decision_function(self, data):
+        return -OneClassSVM.decision_function(self, data)
+
+
+class OneClassSVM_SKL_PRECLUSTER(BaseClassifier):
+    _fit_params = ['nu']
+    _predict_params = []
+    direct_thresh = 0
+    
+    def __init__(self, *args, **kwargs):
+        self.nu = kwargs['nu']
+        self.kernel = "rbf"
+        
+        self.test_size = 2000
+        self.test_rounds = 3
+        
+    def fit(self, data):
+        from sklearn.cross_validation import ShuffleSplit
+        
+        tf = self.test_size / float(len(data))
+        
+        gr = OrderedDict()
+        svf = OrderedDict()
+        gamma_exp = numpy.arange(-1, -16, -1)
+        for gamma in gamma_exp:
+            tr = []
+            sv = []
+            for train_index, test_index in ShuffleSplit(len(data), n_iter=3, test_size=tf, train_size=tf):
+                svm = OneClassSVM_SKL(kernel=self.kernel, nu=self.nu, gamma=2**gamma)
+                svm.fit(data[train_index,:])
+                
+                synt_outliers = numpy.random.random((data[train_index,:].shape[0], data[train_index,:].shape[1]))
+                for i in xrange(data.shape[1]):
+                    i_min, i_max = data[train_index,i].min()*1.1, data[train_index,i].max()*1.1
+                    synt_outliers[:,i]*= (i_max - i_min)
+                    synt_outliers[:,i]+= i_min
+                
+                prediction = svm.predict(synt_outliers)
+                of = (prediction == -1).sum() / float(len(prediction))
+                tr.append(of)
+                sv.append(svm.support_vectors_.shape[0] / float(len(train_index)) )
+            gr[gamma] = numpy.mean(tr)
+            svf[gamma] = numpy.mean(sv)
+            
+        best_gamma =  2**gr.keys()[numpy.argmin(numpy.abs(numpy.array(gr.values())-self.nu*1.1))]
+        
+        from matplotlib import pyplot as plt
+        plt.plot(gamma_exp, numpy.abs(numpy.array(gr.values())-self.nu*2), 'b')
+        plt.plot(gamma_exp, [svf[tmp] for tmp in gamma_exp], 'r')
+        plt.show() 
+        print "best gamma", best_gamma
+        
+        self.svm = OneClassSVM_SKL(kernel=self.kernel, nu=self.nu, gamma=best_gamma)
+        self.svm.fit(data)
+            
+    def decision_function(self, data):
+        return numpy.ones((len(data),))
+
+        
+    def predict(self, data):
+        return self.svm.predict(data)
+        
 
 class OneClassSVM_LIBSVM(BaseClassifier):
     _fit_params = ['nu', 'gamma']
+    _predict_params = []
     def __init__(self, *args, **kwargs):
         self.kernel = 2
         self.nu = kwargs['nu']
@@ -165,27 +232,67 @@ class OneClassAngle(BaseClassifier):
 
 class OneClassMahalanobis(BaseClassifier):
     _fit_params = []
+    _predict_params = ['cuttoff']
     def __init__(self, *args, **kwargs):
         pass
     
     def fit(self, data):
-        #self.cov = MinCovDet().fit(data)
-        self.cov = EmpiricalCovariance().fit(data)
+        nu = 0.01
+        n_sample  = data.shape[0]
+        n_feature = data.shape[1]
+        
+        exclude = set()
+        for d in range(n_feature):
+            feature = data[:, d]
+            s_feature = feature.copy()
+            s_feature.sort()
+            low = s_feature[int(n_sample*nu/2)]
+            upp = s_feature[n_sample-int(n_sample*nu/2)]
+
+            exld = numpy.nonzero(numpy.logical_or((feature > upp),(feature < low)))[0]
+            [exclude.add(e) for e in exld]
+            
+        print len(exclude)
+            
+        use = numpy.array([f for f in range(n_sample) if f not in exclude])
+        
+        data_ = data[use, :]
+            
+        self.cov = EmpiricalCovariance().fit(data_)
+        dist = self.cov.mahalanobis(data)
+        
+        self.cutoff = sorted(dist)[-int(0.15*n_sample)]
+        
+#         import pylab
+#     
+#         import seaborn
+#         
+#         pylab.figure()
+#         pylab.hist(sorted(dist)[:-1000], 128, histtype="stepfilled", alpha=.7)
+#         pylab.xlabel("Distance from center")
+#         pylab.ylabel("Frequency")
+#         
+#         
+#         print self.cutoff
+
+
     
     def predict(self, data):
         mahal_emp_cov = self.cov.mahalanobis(data)
-        d = data.shape[1]
-        thres = scipy.stats.chi2.ppf(0.95, d)
+#         d = data.shape[1]
+#         thres = scipy.stats.chi2.ppf(0.99, d) * 2
         
         self.mahal_emp_cov = mahal_emp_cov
         
-        return (mahal_emp_cov > thres).astype(numpy.int32)*-2+1
+        return (mahal_emp_cov > self.cutoff).astype(numpy.int32)*-2+1
     
     def decision_function(self, data):
         return self.mahal_emp_cov
     
 class OneClassGMM(BaseClassifier):
     _fit_params = ['k']
+    _predict_params = []
+    
     def __init__(self, *args, **kwargs):
         self.k = kwargs['k']
     
@@ -202,10 +309,59 @@ class OneClassGMM(BaseClassifier):
         return (score < self.direct_threshold).astype(numpy.int32)*-2+1
     
     def decision_function(self, data):
-        return self.score
+        return -self.score
+    
+class OneClassGMM2(BaseClassifier):
+    _predict_params = []
+    _fit_params = []
+    
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def fit(self, data, **kwargs):
+        self.gmm = GMM_SKL(2,covariance_type='full')
+        self.gmm.fit(data)
+        pred = self.gmm.predict(data)
+        bcnt = numpy.bincount(pred)
+        self.majority_class_index = numpy.argmax(bcnt)
+        self.direct_threshold = 0.5
+    
+    def predict(self, data):
+        score = self.gmm.score(data)
+        pred = self.gmm.predict(data)
+        
+        tmp = numpy.ones(pred.shape) * -1
+        tmp[pred == self.majority_class_index] = 1
+        
+        self.score = score
+        return tmp
+    
+    def decision_function(self, data):
+        return -self.score
+    
+class OneClassRandom(BaseClassifier):
+    _predict_params = []
+    _fit_params = []
+    
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def fit(self, data, **kwargs):
+        pass
+    
+    def predict(self, data):
+        pred = numpy.random.rand(data.shape[0])
+        self.score = pred.copy()
+        pred[pred>0.8] = 1
+        pred[pred<=0.8] = -1
+        return pred
+    
+    def decision_function(self, data):
+        return -self.score
     
 class OneClassKDE(BaseClassifier):
     _fit_params = ["bandwidth"]
+    _predict_params = []
     def __init__(self, *args, **kwargs):
         self.bandwidth = kwargs["bandwidth"]
     
@@ -222,12 +378,13 @@ class OneClassKDE(BaseClassifier):
         return (score < self.direct_thresh).astype(numpy.int32)*-2+1
     
     def decision_function(self, data):
-        return self.score
+        return -self.score
     
-OneClassSVM = OneClassSVM_LIBSVM
+#OneClassSVM = OneClassSVM_LIBSVM
 
 class ClusterGMM(BaseClassifier, GMM_SKL):
     _fit_params = ["n_components", "covariance_type"]
+    _predict_params = []
     
     def predict(self, data):
         self.cluster_prediction = GMM_SKL.predict(self, data)
@@ -244,8 +401,12 @@ class ClusterGMM(BaseClassifier, GMM_SKL):
             print 1
             
         return distance
+    
+    
+    
 class ClusterKM(BaseClassifier, KMeans):
     _fit_params = ["n_clusters"]
+    _predict_params = []
     
     def predict(self, data):
         self.cluster_prediction = KMeans.predict(self, data)

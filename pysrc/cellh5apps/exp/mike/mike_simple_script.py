@@ -4,7 +4,7 @@ import cellh5
 import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
-    # specify the location of your ch5 files per plate, the plate name, as stored in your "1.ch4" == "New Folder With Items"
+    # specify the location of your ch5 files per plate, the plate name, as stored in your "1.ch5" == "New Folder With Items"
     cellh5_files = {"New Folder With Items": "1.ch5"}
     # to provide some more information about the positions in you plate, we provide a mapping (txt) file (see example)
     mapping_files = {"New Folder With Items": "New Folder With Items.txt"}

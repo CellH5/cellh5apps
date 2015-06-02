@@ -109,27 +109,51 @@ class SaraOutlier(object):
 #     print "*** fini ***"
 
 if __name__ == "__main__":   
-    od = OutlierDetection("sara_p18", **EXP['sara_screen_plates_1_8'])
-    od.set_max_training_sample_size(10000)
-    
-#     od.read_feature(remove_feature=(18, 62, 92, 122, 152), idx_selector_functor=SaraOutlier.sara_mitotic_live_selector).
-    od.read_feature(remove_feature=(16,  17,  18,  62,  92, 122, 137, 138, 152))
-    od.pca_run()
-    feature_set="Object features"
+    if False:
+        od = OutlierDetection("sara_p18", **EXP['sara_screen_plates_1_8'])
+        od.set_max_training_sample_size(10000)
         
-    od.train(classifier_class=OneClassSVM_SKL, gamma=0.035, nu=0.13, kernel="rbf", feature_set=feature_set)
-    od.predict(feature_set=feature_set)
-    od.compute_outlyingness()
-    
-    od.cluster_run(ClusterGMM, max_samples=10000, covariance_type="full", n_components=2)
-    
-    od_plots = OutlierDetectionSingleCellPlots(od)
-    
-    od_plots.evaluate(2)    
-    od_plots.evaluate_cluster(2)
-    
-    od_plots.show_feature_space(2,("target",))
-    
+    #     od.read_feature(remove_feature=(18, 62, 92, 122, 152), idx_selector_functor=SaraOutlier.sara_mitotic_live_selector).
+        od.read_feature(remove_feature=(16,  17,  18,  62,  92, 122, 137, 138, 152))
+        od.pca_run()
+        feature_set="Object features"
+            
+        od.train(classifier_class=OneClassSVM_SKL, gamma=0.035, nu=0.13, kernel="rbf", feature_set=feature_set)
+        od.predict(feature_set=feature_set)
+        od.compute_outlyingness()
+        
+        od.cluster_run(ClusterGMM, max_samples=10000, covariance_type="full", n_components=2)
+        
+        od_plots = OutlierDetectionSingleCellPlots(od)
+        
+        od_plots.evaluate(2)    
+        od_plots.evaluate_cluster(2)
+        
+        od_plots.show_feature_space(2,("target",))
+    elif True:
+        od = OutlierDetection("sara_p18", **EXP['sara_screen_plates_1_8'])
+        od.set_max_training_sample_size(10000)
+        od.read_feature(remove_feature=(16,  17,  18,  62,  92, 122, 137, 138, 152))
+        od.pca_run()
+        od.cluster_run(ClusterGMM, max_samples=8000, covariance_type="full", n_components=2)
+        
+        od_plots = OutlierDetectionSingleCellPlots(od)
+        
+        feature_set="Object features"
+#         data = od.get_data_preclustered(('neg',))
+#         od.train_classifier(data, OneClassSVM_SKL_PRECLUSTER, nu=0.1)
+        od.train(classifier_class=OneClassSVM_SKL, nu=0.10, gamma=0.001, kernel="rbf", feature_set=feature_set)
+        od.predict2(feature_set=feature_set)
+        
+#             tic = time.time()
+#             od.predict2(feature_set=feature_set)
+#             print 'Prediction took', time.time() - tic
+        od.compute_outlyingness()
+        od_plots.evaluate(1)
+        od_plots.outlier_confuion_galleries(on_group=("target",))
+        
+        od_plots.show_feature_space(1,('target',), cut_to_percentile=1)
+        
     
     
     

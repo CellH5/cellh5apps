@@ -11,7 +11,7 @@ from sklearn.covariance import EmpiricalCovariance, MinCovDet
 from sklearn.neighbors.kde import KernelDensity
 from sklearn.mixture import GMM as GMM_SKL
 from sklearn.cluster import KMeans
-import svmutil3
+
 from sklearn.neighbors import NearestNeighbors
 
 import h5py
@@ -114,6 +114,7 @@ class OneClassSVM_LIBSVM(BaseClassifier):
         self.svm_type = 2
     
     def fit(self, data):
+        import svmutil3
         tmp = self._ndarray_to_libsvm_dict(data)
         self.prob = svmutil3.svm_problem([1]*len(data), tmp)
         self.param = svmutil3.svm_parameter("-s %d -t %d -n %f -g %f" % (self.svm_type, self.kernel, self.nu, self.gamma))
@@ -121,6 +122,7 @@ class OneClassSVM_LIBSVM(BaseClassifier):
         self.model = svmutil3.svm_train(self.prob, self.param) 
     
     def predict(self, data):
+        import svmutil3
         p_label, _, p_vals = svmutil3.svm_predict([0]*len(data), self._ndarray_to_libsvm_dict(data), self.model)
         self.df = numpy.array(p_vals)
         return numpy.array(p_label)

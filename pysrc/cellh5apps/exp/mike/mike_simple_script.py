@@ -1,5 +1,6 @@
 import numpy
 import cellh5
+print cellh5.__file__
 
 import matplotlib.pyplot as plt
 
@@ -17,17 +18,17 @@ if __name__ == "__main__":
     
     # now, we read all events in from the ch5 file. Remember you specified a pre-duration for events in CecogAnalyzer
     # we also want to consider events, which occured before frame 100 -> before 300 min
-    ma.read_events(onset_frame=5)
+    ma.read_events(onset_frame=5, object_="primary__primary")
     
     # these events are still fixed window sized events (as found by CecogAnalyzer), but we can start from here and extend the tracking
-    ma.track_events()
+    ma.track_events("primary__primary")
     
     
     # set transmat
     transmat = numpy.array([
-                            [100,  0,   1], # "Inter" (inter can go back to mito)
-                            [  0,  1,   0], # "Death" (dead is dead)
-                            [  1,  0, 100], # "Mito"  (mito can go back to inter)
+                            [100,  1,  0], # "Inter" (inter can go back to mito)
+                            [  1,100,  1], # "Mito"  (mito can go back to inter)
+                            [  0,  0,  1], # "Death" (dead is dead)
                           ])
     transmat = transmat.astype(numpy.float64)
     ma.setup_hmm(transmat, "hmm_config_3c.xml")
@@ -48,7 +49,7 @@ if __name__ == "__main__":
     ma.print_tracks("HMM Track Labels")
     
     # show a specific track visually
-    ma.report_to_csv()
+    ma.report_to_csv("primary__primary")
     
         
         

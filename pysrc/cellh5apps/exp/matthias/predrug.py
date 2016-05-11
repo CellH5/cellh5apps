@@ -240,7 +240,7 @@ if __name__ == "__main__":
 #         od_plots.export_confusion(cellinder_conf, 1, "ci_svm")
 #         
 #         ### Mahal
-        od.train(classifier_class=OneClassMahalanobis, feature_set=feature_set, train_on=('neg',),)
+        od.train(classifier_class=OneClassMahalanobis, feature_set=feature_set, train_on=('neg',),perc_keep=85)
         od.predict2(feature_set=feature_set)
         od.compute_outlyingness()
         od.make_top_hit_list(3000)

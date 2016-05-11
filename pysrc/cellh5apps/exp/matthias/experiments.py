@@ -159,14 +159,14 @@ EXP = {'matthias_predrug_a6':
        'matthias_predrug_a8_plates_1_8':
         {
         'mapping_files' : {
-            'Screen_Plate_01': 'H:/matthias_predrug_a7/Screen_Plate_01_position_map_PRE.txt',
-            'Screen_Plate_02': 'H:/matthias_predrug_a7/Screen_Plate_02_position_map_PRE.txt',
-            'Screen_Plate_03': 'H:/matthias_predrug_a7/Screen_Plate_03_position_map_PRE.txt',
-            'Screen_Plate_04': 'H:/matthias_predrug_a7/Screen_Plate_04_position_map_PRE.txt',
-            'Screen_Plate_05': 'H:/matthias_predrug_a7/Screen_Plate_05_position_map_PRE.txt',
-            'Screen_Plate_06': 'H:/matthias_predrug_a7/Screen_Plate_06_position_map_PRE.txt',
-            'Screen_Plate_07': 'H:/matthias_predrug_a7/Screen_Plate_07_position_map_PRE.txt',
-            'Screen_Plate_08': 'H:/matthias_predrug_a7/Screen_Plate_08_position_map_PRE.txt',
+            'Screen_Plate_01': 'H:/matthias_predrug_a8/Screen_Plate_01_position_map_PRE.txt',
+            'Screen_Plate_02': 'H:/matthias_predrug_a8/Screen_Plate_02_position_map_PRE.txt',
+            'Screen_Plate_03': 'H:/matthias_predrug_a8/Screen_Plate_03_position_map_PRE.txt',
+            'Screen_Plate_04': 'H:/matthias_predrug_a8/Screen_Plate_04_position_map_PRE.txt',
+            'Screen_Plate_05': 'H:/matthias_predrug_a8/Screen_Plate_05_position_map_PRE.txt',
+            'Screen_Plate_06': 'H:/matthias_predrug_a8/Screen_Plate_06_position_map_PRE.txt',
+            'Screen_Plate_07': 'H:/matthias_predrug_a8/Screen_Plate_07_position_map_PRE.txt',
+            'Screen_Plate_08': 'H:/matthias_predrug_a8/Screen_Plate_08_position_map_PRE.txt',
             },
         'cellh5_files' : {
             'Screen_Plate_01': 'H:/matthias_predrug_a8/Screen_Plate_01_all_positions_with_data.ch5',
@@ -183,8 +183,8 @@ EXP = {'matthias_predrug_a6':
 #             ("H", 6), ("A", 7), ("G", 6), ("G", 7),
 #             ("H", 12), ("H", 13), ("G", 12), ("A", 9),
 #             ),
-#         'rows' : list("ABBCD")[:],
-#         'cols' : tuple(range(4, 10,)),
+#         'rows' : list("AB")[:],
+#         'cols' : tuple(range(4, 8,)),
 #         'training_sites' : (1, 2, 3, 4),
         },
        

@@ -14,13 +14,13 @@ from sklearn.svm import OneClassSVM
 from sklearn.feature_selection import RFE
 from sklearn.decomposition import PCA, KernelPCA
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, accuracy_score, roc_curve, recall_score, roc_auc_score
-from sklearn.metrics.metrics import roc_curve
 from sklearn.covariance import EmpiricalCovariance, MinCovDet
 from sklearn.metrics import accuracy_score
 from sklearn.metrics.pairwise import pairwise_distances, pairwise_kernels
 from sklearn.metrics import silhouette_score
 import sklearn.cluster
 import sklearn.mixture
+import json
 
 import cellh5
 from cellh5 import CH5Analysis, CH5File
@@ -80,8 +80,6 @@ class OutlierDetection(CH5Analysis):
         self.mapping['Predictions'] = pandas.Series(prediction)
         self.mapping['Score'] = distance
         
-        
-
     def predict(self, test_on=('target', 'pos', 'neg'), feature_set="Object features"):
         testing_matrix_list = self.mapping[self.mapping['Group'].isin(test_on)][['Well', 'Site', feature_set, "Gene Symbol", "siRNA ID"]].iterrows()
 

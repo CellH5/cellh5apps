@@ -1,6 +1,7 @@
 import numpy
 import vigra
 import scipy
+import pickle
 
 from sklearn.svm import OneClassSVM
 from sklearn.feature_selection import RFE
@@ -233,10 +234,11 @@ class OneClassAngle(BaseClassifier):
         return numpy.ones((data.shape[0],1))
 
 class OneClassMahalanobis(BaseClassifier):
-    _fit_params = []
-    _predict_params = ['cuttoff']
-    def __init__(self, *args, **kwargs):
-        pass
+    _fit_params = ['perc_keep']
+    _predict_params = []
+    def __init__(self,*args, **kwargs):
+#         BaseClassifier.__init__(self, *args, **kwargs)
+        self.perc_keep = kwargs["perc_keep"]
     
     def fit(self, data):
         nu = 0.01
@@ -254,42 +256,28 @@ class OneClassMahalanobis(BaseClassifier):
             exld = numpy.nonzero(numpy.logical_or((feature > upp),(feature < low)))[0]
             [exclude.add(e) for e in exld]
             
-        print len(exclude)
-            
         use = numpy.array([f for f in range(n_sample) if f not in exclude])
         
         data_ = data[use, :]
             
         self.cov = EmpiricalCovariance().fit(data_)
+        
         dist = self.cov.mahalanobis(data)
         
-        self.cutoff = sorted(dist)[-int(0.15*n_sample)]
-        
-#         import pylab
-#     
-#         import seaborn
-#         
-#         pylab.figure()
-#         pylab.hist(sorted(dist)[:-1000], 128, histtype="stepfilled", alpha=.7)
-#         pylab.xlabel("Distance from center")
-#         pylab.ylabel("Frequency")
-#         
-#         
-#         print self.cutoff
-
+        self.cutoff = numpy.percentile(dist, self.perc_keep)
+        print self.cutoff
+    
 
     
     def predict(self, data):
-        mahal_emp_cov = self.cov.mahalanobis(data)
-#         d = data.shape[1]
-#         thres = scipy.stats.chi2.ppf(0.99, d) * 2
+        mahal_dist = self.cov.mahalanobis(data)
+        self.mahal_dist = mahal_dist
+        print mahal_dist.min(), mahal_dist.max(), self.cutoff, (mahal_dist > self.cutoff).sum(), "of", len(mahal_dist)
         
-        self.mahal_emp_cov = mahal_emp_cov
-        
-        return (mahal_emp_cov > self.cutoff).astype(numpy.int32)*-2+1
+        return (mahal_dist > self.cutoff).astype(numpy.uint8)*-2+1
     
-    def decision_function(self, data):
-        return self.mahal_emp_cov
+    def decision_function(self, data=None):
+        return self.mahal_dist
     
 class OneClassGMM(BaseClassifier):
     _fit_params = ['k']
@@ -366,21 +354,35 @@ class OneClassKDE(BaseClassifier):
     _predict_params = []
     def __init__(self, *args, **kwargs):
         self.bandwidth = kwargs["bandwidth"]
+        self.perc_keep = kwargs["perc_keep"]
     
     def fit(self, data, **kwargs):
         #self.train_data = data
         self.kde = KernelDensity(kernel='gaussian', bandwidth=self.bandwidth)
-        self.kde.fit(data)
-        self.training_score = self.kde.score_samples(data)
-        self.direct_thresh = numpy.percentile(self.training_score, 10)
+        
+        idx = numpy.random.randint(2, size=len(data)).astype(numpy.bool)
+        print idx
+        
+        
+        self.kde.fit(data[idx, :])
+        self.training_score = self.kde.score_samples(data[~idx, :])
+        self.direct_thresh = numpy.percentile(self.training_score, 100-self.perc_keep)
+        
+        print 'training', self.training_score.min(), self.training_score.mean(), self.training_score.max(), self.direct_thresh
+        
+        print self.direct_thresh
     
     def predict(self, data):
         score = self.kde.score_samples(data)
         self.score = score
-        return (score < self.direct_thresh).astype(numpy.int32)*-2+1
+        res = (score < self.direct_thresh)
+        print 'test', self.score.min(), self.score.mean(), self.score.max()
+        print res.sum(), "of", len(self.score), 'outliers'
+        
+        return res.astype(numpy.uint8)*-2+1
     
-    def decision_function(self, data):
-        return -self.score
+    def decision_function(self, data=None):
+        return self.score
     
 #OneClassSVM = OneClassSVM_LIBSVM
 
@@ -427,6 +429,60 @@ class ClusterKM(BaseClassifier, KMeans):
         return distance
         
         
+from sklearn.metrics import confusion_matrix, classification_report, f1_score, roc_auc_score, accuracy_score, precision_score, recall_score, roc_curve
+import json
+
+def outlier_metrics(actual, oscore, opredict, inlier_classes, all_class_labels=None, olabel=-1, file_name="outlier_metric.txt"):
+    if all_class_labels is None:
+        all_class_labels = numpy.unique(actual)
+        
+    print 'Outlier label:', olabel 
+    print 'Inlierclasses:',  inlier_classes
+    a = [0 if a in inlier_classes else 1 for a in actual]
+    p = [1 if p == olabel else 0 for p in opredict]
+    
+    
+    res = {}
+    res["report"]    =  classification_report(a, p)
+    conv      = confusion_matrix(a, p)
+    conv_n = conv.copy().astype(numpy.float32)
+    
+    for c in conv_n:
+        c /= c.sum()
+        
+    res["conv_raw"] = conv.tolist()
+    res["conv"] = conv_n.tolist()
+    res["acc"]       = accuracy_score(a, p)
+    res["f1"]        = f1_score(a, p)
+    res["auc"]       = roc_auc_score(a, oscore)
+    res["precision"] = precision_score(a, p)
+    res["recall"]    = recall_score(a, p)
+    ROC = roc_curve(a, oscore)
+    
+    with open(file_name, "w") as ff:
+        json.dump(res, ff)
+        
+    
+    with open(file_name + "_roc_data", "wb") as ff:
+        pickle.dump(ROC, ff)    
+    return res
+
+import os
+def save_outlier_results(name, features, acutal, oscore, opredict, folder="C:/Users/sommerc/src/ipyn/sandbox/chris/paper"):
+    with h5py.File(os.path.join(folder, name), 'w') as h:
+        h.create_dataset('features', data=features)
+        h.create_dataset('actual', data=acutal)
+        h.create_dataset('oscore', data=oscore)
+        h.create_dataset('opredict', data=opredict)
+    
+
+def load_outlier_results(name):
+    with h5py.File(name, 'r') as h:
+        f = h['features'].value
+        a = h['actual'].value
+        os = h['oscore'].value
+        op = h['opredict'].value
+    return f, a,os, op
         
 
 if __name__ == "__main__":
@@ -453,4 +509,6 @@ if __name__ == "__main__":
     pylab.plot(x_test[p==-1, plot_dim[0]], x_test[p==-1,plot_dim[1]], 'ro', markerfacecolor="none", markeredgecolor='r')
     
     pylab.show()
+    
+    
     
